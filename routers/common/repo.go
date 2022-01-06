@@ -9,6 +9,7 @@ import (
 	"io"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"code.gitea.io/gitea/modules/charset"
@@ -42,6 +43,61 @@ func ServeBlob(ctx *context.Context, blob *git.Blob) error {
 
 // ServeData download file from io.Reader
 func ServeData(ctx *context.Context, name string, size int64, reader io.Reader) error {
+
+	// Chrome Dev / 网络 / 节流模式
+	// https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Range
+	// https://developer.mozilla.org/en-US/docs/Web/HTTP/Range_requests
+	if _, ok := reader.(io.ReaderAt); ok {
+		if rng := ctx.Req.Header.Get("Range"); len(rng) > 0 {
+			var start int
+			var end int
+			var err, err2 error
+			// Range: bytes=131072-
+			arr := strings.Split(strings.TrimLeft(rng, "bytes="), "-")
+			start, err = strconv.Atoi(arr[0])
+			if len(arr[1]) == 0 {
+				end = int(size - 1)
+			} else {
+				end, err2 = strconv.Atoi(arr[1])
+				if int64(end) > size-1 {
+					end = int(size - 1)
+				}
+			}
+
+			length := end - start + 1
+			if length <= 0 || nil != err || nil != err2 {
+				return fmt.Errorf("invalid range header: %s", rng)
+			}
+
+			log.Warn("%s start:%d end:%d len:%d", rng, start, end, length)
+
+			//ctx.Status(206)
+			//ctx.Resp.Header().Set("Content-Length", strconv.Itoa(length))
+			//ctx.Resp.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, size))
+			//// todo use bytes.Reader
+			//if start > 0 {
+			//	num := start + 1
+			//	buf := make([]byte, 1024)
+			//	for i := 0; ; {
+			//		i += 1024
+			//		if i > num {
+			//			if _, err := reader.Read(buf[:num%1024]); err != nil {
+			//				return err
+			//			}
+			//			break
+			//		}
+			//		if _, err := reader.Read(buf); err != nil {
+			//			return err
+			//		}
+			//	}
+			//}
+			//_, err = io.CopyN(ctx.Resp, reader, int64(length))
+			//return err
+		} else {
+			ctx.Resp.Header().Set("Accept-Ranges", "bytes")
+		}
+	}
+
 	buf := make([]byte, 1024)
 	n, err := util.ReadAtMost(reader, buf)
 	if err != nil {
